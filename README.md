@@ -1,5 +1,7 @@
 # Jarvis Desktop Voice Assistant🔥
 
+> Repository note: this repository contains the Jarvis Desktop Voice Assistant project. The GitHub repository name may differ from the project name.
+
 <img src="https://giffiles.alphacoders.com/212/212508.gif" alt="">
 
 **Have you ever wondered how cool it would be to have your own assistant? Imagine how easier it would be doing Wikipedia searches without opening web browsers, and performing many other daily tasks like playing music with the help of a single voice command, opening different browsers in just a voice command.**
@@ -29,7 +31,13 @@ It can do a lot of cool things, some of them being:
 
 ## Requirements
 
-Python 3.6+
+Python 3.11 recommended.
+
+## Recent Changes
+
+- Improved speech output by preferring native Windows SAPI with `pyttsx3` fallback.
+- Improved microphone recognition with ambient-noise calibration, longer listen windows, and `en-US`/`en-IN` recognition fallback.
+- Added responses for common greetings and unsupported commands so Jarvis no longer fails silently.
 
 ## 📌Installation
 
@@ -40,7 +48,7 @@ Python 3.6+
    - Clone the forked repository to your local machine:
      ```bash
      git clone <URL>
-     cd Jarvis-Desktop-Voice-Assistant
+  cd <repository-folder>
      ```
 
 3.  **Create and Activate a Virtual Environment**
@@ -69,6 +77,7 @@ Python 3.6+
 6. **Run the Assistant**
   - Run the main script:
     ```bash
+    cd Jarvis
     python jarvis.py
     ```
   - Now Enjoy with your own assistant !!!!
