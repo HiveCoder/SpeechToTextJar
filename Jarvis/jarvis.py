@@ -5,9 +5,22 @@ import wikipedia
 import webbrowser as wb
 import os
 import random
+import json
 import pyautogui
 import pyjokes
 from win32com.client import Dispatch
+
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
+
+CHAT_MODEL = os.getenv("JARVIS_OPENAI_MODEL", "gpt-4.1-mini")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONVERSATION_FILE = os.path.join(BASE_DIR, "conversation_history.json")
+conversation_history = []
+openai_client = None
 
 speaker = None
 engine = None
@@ -43,7 +56,7 @@ def speak(audio) -> None:
 
 def time() -> None:
     """Tells the current time."""
-    current_time = datetime.datetime.now().strftime("%I:%M:%S %p")
+    current_time = get_time_text()
     speak("The current time is")
     speak(current_time)
     print("The current time is", current_time)
@@ -51,10 +64,10 @@ def time() -> None:
 
 def date() -> None:
     """Tells the current date."""
-    now = datetime.datetime.now()
+    current_date = get_date_text()
     speak("The current date is")
-    speak(f"{now.day} {now.strftime('%B')} {now.year}")
-    print(f"The current date is {now.day}/{now.month}/{now.year}")
+    speak(current_date)
+    print(f"The current date is {current_date}")
 
 
 def wishme() -> None:
@@ -143,6 +156,17 @@ def play_music(song_name=None) -> None:
         speak("No song found.")
         print("No song found.")
 
+
+def get_time_text() -> str:
+    """Returns the current time in speech-friendly format."""
+    return datetime.datetime.now().strftime("%I:%M:%S %p")
+
+
+def get_date_text() -> str:
+    """Returns the current date in speech-friendly format."""
+    now = datetime.datetime.now()
+    return f"{now.day} {now.strftime('%B')} {now.year}"
+
 def set_name() -> None:
     """Sets a new name for the assistant."""
     speak("What would you like to name me?")
@@ -176,13 +200,321 @@ def search_wikipedia(query):
         speak("I couldn't find anything on Wikipedia.")
 
 
+def search_wikipedia_text(query: str) -> str:
+    """Searches Wikipedia and returns a summary string."""
+    try:
+        result = wikipedia.summary(query, sentences=2)
+        return result
+    except wikipedia.exceptions.DisambiguationError:
+        return "Multiple Wikipedia results were found. Please be more specific."
+    except Exception:
+        return "I couldn't find anything on Wikipedia."
+
+
 def describe_capabilities() -> None:
     """Tells the user what commands the assistant supports."""
     message = (
         "I can tell the time and date, search Wikipedia, open Google or YouTube, "
-        "play music, take a screenshot, tell a joke, change my name, or go offline."
+        "play music, take a screenshot, tell a joke, change my name, or go offline. "
+        "If OpenAI is configured, I can also answer general questions like ChatGPT, "
+        "remember recent conversations across restarts, and decide when to use my tools."
     )
     speak(message)
+
+
+def is_greeting(query: str) -> bool:
+    """Returns True when a query is a direct greeting or presence check."""
+    words = set(query.split())
+    short_greetings = {"hello", "hi", "hey"}
+    long_greetings = {
+        "are you there",
+        "are you still there",
+        "can you respond",
+        "can you hear me",
+    }
+
+    return bool(words & short_greetings) or any(phrase in query for phrase in long_greetings)
+
+
+def reset_conversation() -> None:
+    """Clears the AI conversation memory for the current run."""
+    conversation_history.clear()
+    save_conversation_history()
+    speak("Conversation memory cleared.")
+
+
+def load_conversation_history() -> list:
+    """Loads persistent conversation history from disk."""
+    try:
+        with open(CONVERSATION_FILE, "r", encoding="utf-8") as history_file:
+            history = json.load(history_file)
+    except FileNotFoundError:
+        return []
+    except (json.JSONDecodeError, OSError):
+        return []
+
+    if not isinstance(history, list):
+        return []
+
+    valid_messages = []
+    for item in history:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = item.get("content")
+        if role in {"user", "assistant"} and isinstance(content, str):
+            valid_messages.append({"role": role, "content": content})
+
+    return valid_messages[-12:]
+
+
+def save_conversation_history() -> None:
+    """Persists recent conversation history to disk."""
+    try:
+        with open(CONVERSATION_FILE, "w", encoding="utf-8") as history_file:
+            json.dump(conversation_history[-12:], history_file, indent=2)
+    except OSError:
+        pass
+
+
+def get_openai_client():
+    """Returns a lazily-initialized OpenAI client."""
+    global openai_client
+
+    if OpenAI is None:
+        return None
+
+    if not OPENAI_API_KEY:
+        return None
+
+    if openai_client is None:
+        openai_client = OpenAI(api_key=OPENAI_API_KEY)
+
+    return openai_client
+
+
+def get_tool_definitions() -> list:
+    """Returns tool definitions exposed to OpenAI."""
+    return [
+        {
+            "type": "function",
+            "name": "get_time",
+            "description": "Get the current local time.",
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+        {
+            "type": "function",
+            "name": "get_date",
+            "description": "Get the current local date.",
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+        {
+            "type": "function",
+            "name": "open_google",
+            "description": "Open Google in the default browser.",
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+        {
+            "type": "function",
+            "name": "open_youtube",
+            "description": "Open YouTube in the default browser.",
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+        {
+            "type": "function",
+            "name": "search_wikipedia",
+            "description": "Search Wikipedia and return a short summary.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "The topic to search on Wikipedia."}
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "type": "function",
+            "name": "play_music",
+            "description": "Play a song from the user's Music folder, optionally matching a title.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "song_name": {"type": "string", "description": "Optional song title or keyword."}
+                },
+                "additionalProperties": False,
+            },
+        },
+        {
+            "type": "function",
+            "name": "take_screenshot",
+            "description": "Take a screenshot and save it to the user's Pictures folder.",
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+        {
+            "type": "function",
+            "name": "tell_joke",
+            "description": "Return a short joke.",
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+        {
+            "type": "function",
+            "name": "describe_capabilities",
+            "description": "Describe what Jarvis can do.",
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+        {
+            "type": "function",
+            "name": "reset_chat_memory",
+            "description": "Clear saved conversation memory for Jarvis.",
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    ]
+
+
+def call_tool(tool_name: str, arguments: dict) -> str:
+    """Executes a local tool requested by OpenAI and returns text output."""
+    if tool_name == "get_time":
+        return f"The current time is {get_time_text()}."
+
+    if tool_name == "get_date":
+        return f"Today's date is {get_date_text()}."
+
+    if tool_name == "open_google":
+        wb.open("https://google.com")
+        return "Opened Google."
+
+    if tool_name == "open_youtube":
+        wb.open("https://youtube.com")
+        return "Opened YouTube."
+
+    if tool_name == "search_wikipedia":
+        query = arguments.get("query", "").strip()
+        if not query:
+            return "No Wikipedia query was provided."
+        return search_wikipedia_text(query)
+
+    if tool_name == "play_music":
+        song_name = arguments.get("song_name", "").strip() or None
+        play_music(song_name)
+        if song_name:
+            return f"Tried to play music matching {song_name}."
+        return "Tried to play music from the Music folder."
+
+    if tool_name == "take_screenshot":
+        screenshot()
+        return "Screenshot taken and saved to the Pictures folder."
+
+    if tool_name == "tell_joke":
+        return pyjokes.get_joke()
+
+    if tool_name == "describe_capabilities":
+        return (
+            "Jarvis can tell the time and date, search Wikipedia, open Google or YouTube, "
+            "play music, take a screenshot, tell jokes, change its name, and chat with OpenAI."
+        )
+
+    if tool_name == "reset_chat_memory":
+        conversation_history.clear()
+        save_conversation_history()
+        return "Conversation memory cleared."
+
+    return f"Unknown tool requested: {tool_name}"
+
+
+def run_ai_turn(client, response) -> str:
+    """Processes OpenAI tool calls until a final text response is produced."""
+    max_round_trips = 3
+
+    for _ in range(max_round_trips):
+        function_calls = [item for item in response.output if item.type == "function_call"]
+        if not function_calls:
+            answer = response.output_text.strip()
+            if answer:
+                return answer
+            return "I could not generate a response just now. Please try again."
+
+        tool_outputs = []
+        for tool_call in function_calls:
+            try:
+                arguments = json.loads(tool_call.arguments or "{}")
+            except json.JSONDecodeError:
+                arguments = {}
+
+            output = call_tool(tool_call.name, arguments)
+            tool_outputs.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": tool_call.call_id,
+                    "output": output,
+                }
+            )
+
+        response = client.responses.create(
+            model=CHAT_MODEL,
+            previous_response_id=response.id,
+            input=tool_outputs,
+        )
+
+    return "I used my tools, but I could not finish the response cleanly. Please try again."
+
+
+def ask_ai(query: str) -> str | None:
+    """Uses OpenAI as a conversational fallback for unknown commands."""
+    client = get_openai_client()
+    if client is None:
+        if not OPENAI_API_KEY:
+            return (
+                "I can be more intelligent with ChatGPT, but OPENAI_API_KEY is not set yet. "
+                "Set that environment variable, then restart Jarvis."
+            )
+
+        return (
+            "The OpenAI package is not installed yet. Run the launcher install option, "
+            "then restart Jarvis."
+        )
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are Jarvis, a concise desktop voice assistant. "
+                "Answer naturally, keep responses short enough to be spoken aloud, "
+                "and avoid markdown or bullet lists unless the user explicitly asks for them. "
+                "Use tools when a user is asking for an action like opening websites, telling the time, "
+                "taking screenshots, searching Wikipedia, or playing music."
+            ),
+        }
+    ]
+
+    messages.extend(conversation_history[-6:])
+    messages.append({"role": "user", "content": query})
+
+    try:
+        response = client.responses.create(
+            model=CHAT_MODEL,
+            input=messages,
+            tools=get_tool_definitions(),
+        )
+        answer = run_ai_turn(client, response)
+    except Exception as error:
+        return f"OpenAI request failed: {error}"
+
+    if not answer:
+        return "I could not generate a response just now. Please try again."
+
+    conversation_history.append({"role": "user", "content": query})
+    conversation_history.append({"role": "assistant", "content": answer})
+
+    if len(conversation_history) > 12:
+        del conversation_history[:-12]
+
+    save_conversation_history()
+
+    return answer
+
+
+conversation_history = load_conversation_history()
 
 
 def handle_query(query: str) -> bool:
@@ -219,18 +551,7 @@ def handle_query(query: str) -> bool:
         speak(joke)
         print(joke)
 
-    elif any(
-        phrase in query
-        for phrase in (
-            "hello",
-            "hi",
-            "hey",
-            "are you there",
-            "are you still there",
-            "can you respond",
-            "can you hear me",
-        )
-    ):
+    elif is_greeting(query):
         speak("Yes, I'm here. How can I help you?")
 
     elif "what can you do" in query or "help" in query:
@@ -241,6 +562,9 @@ def handle_query(query: str) -> bool:
 
     elif "who are you" in query:
         speak("I am Jarvis, your desktop assistant.")
+
+    elif "reset chat" in query or "clear memory" in query:
+        reset_conversation()
 
     elif "shutdown" in query:
         speak("Shutting down the system, goodbye!")
@@ -257,11 +581,7 @@ def handle_query(query: str) -> bool:
         return False
 
     else:
-        message = (
-            "I heard you, but I do not know that command yet. "
-            "Try saying time, date, open google, open youtube, wikipedia, "
-            "tell me a joke, screenshot, play music, or exit."
-        )
+        message = ask_ai(query)
         speak(message)
 
     return True

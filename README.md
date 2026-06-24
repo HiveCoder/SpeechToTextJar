@@ -38,6 +38,38 @@ Python 3.11 recommended.
 - Improved speech output by preferring native Windows SAPI with `pyttsx3` fallback.
 - Improved microphone recognition with ambient-noise calibration, longer listen windows, and `en-US`/`en-IN` recognition fallback.
 - Added responses for common greetings and unsupported commands so Jarvis no longer fails silently.
+- Added optional OpenAI fallback so unknown voice queries can be answered more like ChatGPT while keeping the existing desktop commands.
+- Added persistent conversation memory across restarts with a `reset chat` or `clear memory` voice command.
+- Added AI tool calling so OpenAI can decide when to use local actions like time, Wikipedia, screenshots, browser opens, and music.
+
+## Optional AI Setup
+
+To make Jarvis answer general questions with OpenAI while keeping the current voice-command features:
+
+1. Install dependencies:
+  ```bash
+  run-jarvis.bat install
+  ```
+2. Set your API key in PowerShell before launching Jarvis:
+  ```powershell
+  $env:OPENAI_API_KEY="your_api_key_here"
+  ```
+3. Optionally choose a model:
+  ```powershell
+  $env:JARVIS_OPENAI_MODEL="gpt-4.1-mini"
+  ```
+4. Start Jarvis normally:
+  ```bash
+  run-jarvis.bat run
+  ```
+
+If `OPENAI_API_KEY` is not set, Jarvis still works for its normal desktop voice commands.
+
+When OpenAI is enabled, Jarvis now also:
+
+- keeps a short conversation memory across restarts
+- can use local tools automatically for supported actions
+- supports `reset chat` or `clear memory` to wipe saved conversation context
 
 ## 📌Installation
 

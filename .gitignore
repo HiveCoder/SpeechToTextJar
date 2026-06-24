@@ -3,3 +3,4 @@
 __pycache__/
 *.pyc
 SpeechToTextJar/
+Jarvis/conversation_history.json
